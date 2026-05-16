@@ -292,7 +292,7 @@ app.get("/api/system-settings", (req, res) => {
 });
 
 // Download file endpoint proxy for binary content
-app.get("/api/download/file/:filename", async (req, res) => {
+app.all("/api/download/file/:filename", async (req, res) => {
   const { filename: rawFilename } = req.params;
   const sessionUser = getUserSessionFromRequest(req);
   const filename = resolveFilenameFromSession(rawFilename, sessionUser);
@@ -331,7 +331,7 @@ app.get("/api/download/file/:filename", async (req, res) => {
 });
 
 // Preview file endpoint proxy - forces inline disposition for browser preview
-app.get("/api/preview/file/:filename", async (req, res) => {
+app.all("/api/preview/file/:filename", async (req, res) => {
   const { filename: rawFilename } = req.params;
   const sessionUser = getUserSessionFromRequest(req);
   const filename = resolveFilenameFromSession(rawFilename, sessionUser);
@@ -368,6 +368,16 @@ app.get("/api/preview/file/:filename", async (req, res) => {
     const message = error?.response?.data || error?.message || "Failed to preview file";
     res.status(status).json({ status: "error", message });
   }
+});
+
+app.all("/api/download/preview/:filename", (req, res) => {
+  const { filename: rawFilename } = req.params;
+  const sessionUser = getUserSessionFromRequest(req);
+  const filename = resolveFilenameFromSession(rawFilename, sessionUser);
+  const queryString = req.url.includes("?") ? req.url.split("?")[1] : "";
+  const redirectUrl = `/api/preview/file/${encodeURIComponent(filename)}${queryString ? `?${queryString}` : ""}`;
+  console.log(`[ALIAS] /api/download/preview/${rawFilename} -> ${redirectUrl}`);
+  res.redirect(307, redirectUrl);
 });
 
 // Endpoint to test connection to JIBAS and WhatsApp APIs
@@ -621,6 +631,15 @@ app.all("/api/*", async (req, res, next) => {
     finalPath = `api/${targetPath}`;
   }
 
+  const skipProxyPaths = [
+    "/api/download/file/",
+    "/api/preview/file/",
+    "/api/download/preview/"
+  ];
+  if (req.path === "/api/health" || skipProxyPaths.some(prefix => req.path.startsWith(prefix))) {
+    return next();
+  }
+
     // Use dynamic JIBAS API URL
     const targetBaseUrl = systemSettings.jibasApiUrl.replace(/\/$/, "");
     const queryString = req.url.includes("?") ? req.url.split("?")[1] : "";
@@ -675,6 +694,22 @@ app.all("/api/*", async (req, res, next) => {
       const response = await fetch(targetUrl, fetchOptions);
       clearTimeout(timeoutId);
       
+      const contentType = response.headers.get("content-type") || "";
+      if (req.method === "HEAD") {
+        response.headers.forEach((value, name) => {
+          res.setHeader(name, value);
+        });
+        return res.sendStatus(response.status);
+      }
+
+      if (!contentType.includes("application/json")) {
+        response.headers.forEach((value, name) => {
+          res.setHeader(name, value);
+        });
+        const rawBuffer = Buffer.from(await response.arrayBuffer());
+        return res.status(response.status).send(rawBuffer);
+      }
+
       const data = await response.json();
       
       // AUTO-SYNC LOGIC: Sync successful login data to Firestore
