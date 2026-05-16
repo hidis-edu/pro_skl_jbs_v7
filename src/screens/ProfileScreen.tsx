@@ -4,7 +4,7 @@ import { User, Settings, LogOut, Shield, HelpCircle, ChevronRight, Mail, CheckCi
 import axios from "axios";
 import { UserData } from "@/types";
 import { cn } from "@/lib/utils";
-import { auth, googleProvider, linkWithPopup, signInWithPopup, onAuthStateChanged, db, doc } from "@/firebase";
+import { auth, googleProvider, linkWithPopup, signInWithPopup, onAuthStateChanged } from "@/firebase";
 import { toast } from "sonner";
 
 interface ProfileScreenProps {
@@ -82,13 +82,9 @@ export default function ProfileScreen({ user, onLogout, onNavigate }: ProfileScr
     if (!currentUser) return;
     setIsResetting(true);
     try {
-      // Delete user document in Firestore
-      const { deleteDoc } = await import("firebase/firestore");
-      await deleteDoc(doc(db, "users", currentUser.uid));
-      
-      toast.success("Pemetaan akun berhasil dihapus. Silakan masuk kembali.");
-      
-      // Logout
+      localStorage.removeItem('google_tokens');
+      localStorage.removeItem('google_email');
+      toast.success("Pemetaan akun dihapus secara lokal. Silakan masuk kembali.");
       onLogout();
     } catch (error) {
       console.error("Failed to reset mapping:", error);

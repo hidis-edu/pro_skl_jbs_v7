@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { MapPin, Clock, User, CheckCircle2, AlertCircle, Loader2, Camera, Upload, ShieldCheck, X } from "lucide-react";
 import { UserData } from "@/types";
 import { cn } from "@/lib/utils";
-import { db, auth, collection, addDoc, onSnapshot, query, where, orderBy, doc, updateDoc, getDocFromServer, Timestamp, signInAnonymously, serverTimestamp, signInWithPopup, googleProvider, handleFirestoreError, OperationType } from "@/firebase";
+import { auth, signInAnonymously, signInWithPopup, googleProvider } from "@/firebase";
 
 interface PickupStatusProps {
   user: UserData;
@@ -26,84 +26,14 @@ export default function PickupStatus({ user }: PickupStatusProps) {
   const [savedProfile, setSavedProfile] = useState<{ name: string; relationship: string; photo: string } | null>(null);
 
   useEffect(() => {
-    let unsubscribeSnapshot: (() => void) | null = null;
-
-    const unsubscribeAuth = auth.onAuthStateChanged(async (currentUser) => {
+    const unsubscribeAuth = auth.onAuthStateChanged((currentUser) => {
       setIsAuthReady(true);
-      
-      // Cleanup previous snapshot listener
-      if (unsubscribeSnapshot) {
-        unsubscribeSnapshot();
-        unsubscribeSnapshot = null;
-      }
-
-      if (currentUser) {
-        // Load saved profile from Firestore and confirm user doc exists
-        let retryCount = 0;
-        const fetchProfile = async () => {
-          try {
-            const userDoc = await getDocFromServer(doc(db, 'users', currentUser.uid));
-            if (userDoc.exists()) {
-              setIsProfileReady(true);
-              if (userDoc.data().lastGuardian) {
-                setSavedProfile(userDoc.data().lastGuardian);
-              }
-            } else if (retryCount < 3) {
-              // If user doc doesn't exist yet, retry a few times (it might be being created by App.tsx)
-              retryCount++;
-              setTimeout(fetchProfile, 1000);
-            } else {
-              // Still not found, but we'll allow it and hope for the best (or App.tsx will eventually create it)
-              setIsProfileReady(true);
-            }
-          } catch (err) {
-            console.error("Failed to load user profile:", err);
-            handleFirestoreError(err, OperationType.GET, `users/${currentUser.uid}`);
-            if (retryCount < 3) {
-              retryCount++;
-              setTimeout(fetchProfile, 1000);
-            } else {
-              setIsProfileReady(true);
-            }
-          }
-        };
-        fetchProfile();
-
-        const path = 'pickups';
-        let studentId = String(user.nis || user.nopendaftaran || "");
-        
-        // If employee, use the same placeholder logic to see their own test requests
-        if (!studentId && (user.level === 1 || user.level === 2)) {
-          studentId = `EMP-${user.nip || currentUser.uid.substring(0, 8)}`;
-        }
-
-        // Filter by studentNis to ensure privacy between different students
-        const q = query(
-          collection(db, path),
-          where("studentNis", "==", studentId),
-          orderBy("createdAt", "desc")
-        );
-
-        unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-          const data = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }));
-          setRegisteredGuardians(data);
-          setLoadingGuardians(false);
-        }, (error) => {
-          handleFirestoreError(error, OperationType.GET, path);
-          setLoadingGuardians(false);
-        });
-      } else {
-        setRegisteredGuardians([]);
-        setLoadingGuardians(false);
-      }
+      setIsProfileReady(true);
+      setLoadingGuardians(false);
     });
 
     return () => {
       unsubscribeAuth();
-      if (unsubscribeSnapshot) unsubscribeSnapshot();
     };
   }, []);
 
@@ -272,41 +202,8 @@ export default function PickupStatus({ user }: PickupStatusProps) {
         return;
       }
 
-      const newPickup = {
-        studentNis: studentId,
-        studentName: user.nama,
-        studentClass: user.nama_kelas || user.kelas || user.studentClass || "7-A", // Use nama_kelas if available
-        guardianName: guardianName,
-        relationship: relationship,
-        photo: guardianPhoto,
-        status: "waiting",
-        time: new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
-        createdAt: serverTimestamp(),
-        createdBy: currentUser.uid
-      };
-
-      console.log("Sending to Firestore:", newPickup);
-      const docRef = await addDoc(collection(db, path), newPickup);
-      console.log("Document written with ID:", docRef.id);
-      
-      // Save/Update guardian profile in user's document
-      try {
-        await updateDoc(doc(db, 'users', currentUser.uid), {
-          lastGuardian: {
-            name: guardianName,
-            relationship: relationship,
-            photo: guardianPhoto
-          }
-        });
-        setSavedProfile({ name: guardianName, relationship: relationship, photo: guardianPhoto || "" });
-      } catch (err) {
-        console.error("Failed to save guardian profile:", err);
-        handleFirestoreError(err, OperationType.WRITE, `users/${currentUser.uid}`);
-      }
-      
       setIsSubmitting(false);
       setIsSuccess(true);
-      
       setTimeout(() => {
         setIsRequestingGuardian(false);
         setIsSuccess(false);
@@ -318,12 +215,7 @@ export default function PickupStatus({ user }: PickupStatusProps) {
     } catch (err: any) {
       setIsSubmitting(false);
       console.error("Submit error details:", err);
-      handleFirestoreError(err, OperationType.WRITE, path);
-      if (err.message?.includes("insufficient permissions") || err.code === "permission-denied") {
-        setError("Izin ditolak. Silakan hubungi admin.");
-      } else {
-        setError(`Gagal mengirim data: ${err.message || "Periksa koneksi Anda."}`);
-      }
+      setError(`Gagal mengirim data: ${err.message || "Periksa koneksi Anda."}`);
     }
   };
 

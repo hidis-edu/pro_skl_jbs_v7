@@ -5,7 +5,7 @@ import axios from "axios";
 import { UserData, FinanceInfo, BillItem } from "@/types";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { db, auth, collection, addDoc, serverTimestamp, signInAnonymously, query, where, orderBy, onSnapshot, handleFirestoreError, OperationType } from "@/firebase";
+import { auth, signInAnonymously } from "@/firebase";
 import { PaymentRequest } from "@/types";
 
 interface FinanceScreenProps {
@@ -23,7 +23,7 @@ export default function FinanceScreen({ user, onBack }: FinanceScreenProps) {
   const [proofPhoto, setProofPhoto] = useState<string | null>(null);
   const [isPaying, setIsPaying] = useState(false);
   const [paymentHistory, setPaymentHistory] = useState<PaymentRequest[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const isPayingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -104,31 +104,6 @@ export default function FinanceScreen({ user, onBack }: FinanceScreenProps) {
 
     fetchData();
   }, [identifier, isSiswa, user.nis, user.nopendaftaran]);
-
-  useEffect(() => {
-    if (!identifier) return;
-
-    const q = query(
-      collection(db, "payments"),
-      where("studentNis", "==", identifier),
-      orderBy("createdAt", "desc")
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const history = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as PaymentRequest[];
-      setPaymentHistory(history);
-      setLoadingHistory(false);
-    }, (err) => {
-      console.error("History fetch error:", err);
-      handleFirestoreError(err, OperationType.GET, "payments");
-      setLoadingHistory(false);
-    });
-
-    return () => unsubscribe();
-  }, [identifier]);
 
   const handlePayNow = (bill: BillItem) => {
     setSelectedBill(bill);
@@ -264,52 +239,38 @@ export default function FinanceScreen({ user, onBack }: FinanceScreenProps) {
         amount: paymentAmount,
         proofPhoto: proofPhoto,
         status: "waiting",
-        createdAt: serverTimestamp(),
+        createdAt: new Date().toISOString(),
         createdBy: currentUser.uid
       };
 
-      console.log("FinanceScreen: Saving payment request to Firestore...");
-      await addDoc(collection(db, "payments"), paymentRequest);
       completed = true;
-      console.log("FinanceScreen: Payment request saved successfully.");
-      
       clearTimeout(timeoutId);
       toast.dismiss(loadingToast);
 
-      // Capture values for background notification before clearing state
-      const billName = selectedBill.nama;
-      const amount = paymentAmount;
-
-      // Close modal and show success immediately to avoid "stuck" feeling
       setSelectedBill(null);
       setIsPaying(false);
-      
       toast.success("Konfirmasi Terkirim", {
-        description: "Pembayaran Anda sedang menunggu verifikasi oleh bagian keuangan."
+        description: "Pembayaran Anda sedang diproses."
       });
 
-      // Notify Admin via WhatsApp in background (don't await)
       console.log("FinanceScreen: Sending background admin notification...");
       axios.post("/api/notify-admin-payment", {
         studentName: user.nama,
-        amount: amount,
-        billName: billName
+        amount: paymentAmount,
+        billName: selectedBill.nama
       }).then(res => {
         console.log("FinanceScreen: Admin notification sent successfully:", res.data);
       }).catch(notifyErr => {
         console.error("FinanceScreen: Background notification failed:", notifyErr);
       });
 
-      return; // Exit early since we already handled success
+      return;
     } catch (err) {
       completed = true;
       clearTimeout(timeoutId);
       toast.dismiss(loadingToast);
       console.error("FinanceScreen: Payment error:", err);
       toast.error("Gagal mengirim konfirmasi pembayaran");
-      if (err && typeof err === 'object' && 'code' in err) {
-        handleFirestoreError(err, OperationType.WRITE, "payments");
-      }
     } finally {
       setIsPaying(false);
     }

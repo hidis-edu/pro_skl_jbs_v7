@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Info, Calendar, Megaphone, FileText, ChevronRight, Plus, X, Loader2, Trash2, ExternalLink, Clock, MapPin, Tag, Play, Video, Search, Filter } from "lucide-react";
 import { UserData, NewsItem, AgendaItem, DocumentItem, CalendarEvent, TeacherSchedule, ClassScheduleData } from "@/types";
-import { db, auth, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, deleteDoc, doc, handleFirestoreError, OperationType } from "@/firebase";
+import { auth } from "@/firebase";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -118,10 +118,17 @@ export default function InfoScreen({ user }: InfoScreenProps) {
 
   const getDocumentPreviewUrl = (raw: string) => {
     const filename = resolveDocumentFilename(raw);
-    return `/api/preview/file/${encodeURIComponent(filename)}`;
+    return `/api/download/preview/${encodeURIComponent(filename)}`;
   };
 
   const [previewMode, setPreviewMode] = useState<boolean>(true);
+  const [selectedPreviewUrl, setSelectedPreviewUrl] = useState<string>("");
+
+  useEffect(() => {
+    if (!previewMode) {
+      setSelectedPreviewUrl("");
+    }
+  }, [previewMode]);
 
   useEffect(() => {
     const unsubscribeAuth = auth.onAuthStateChanged((firebaseUser) => {
@@ -132,46 +139,12 @@ export default function InfoScreen({ user }: InfoScreenProps) {
   }, []);
 
   useEffect(() => {
-    // Wait for auth to be ready before starting snapshots to avoid permission errors
     if (!authReady) {
-      // If after 3 seconds still not ready, stop loading to show empty state or error
       const timer = setTimeout(() => setLoading(false), 3000);
       return () => clearTimeout(timer);
     }
 
-    setLoading(true);
-    const newsQuery = query(collection(db, "news"), orderBy("createdAt", "desc"));
-    const eventsQuery = query(collection(db, "events"), orderBy("date", "asc"));
-    const docsQuery = query(collection(db, "documents"), orderBy("createdAt", "desc"));
-
-    const unsubNews = onSnapshot(newsQuery, (snapshot) => {
-      setNews(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as NewsItem)));
-      setLoading(false);
-    }, (error) => {
-      console.error("News snapshot error:", error);
-      handleFirestoreError(error, OperationType.GET, "news");
-      setLoading(false);
-    });
-
-    const unsubEvents = onSnapshot(eventsQuery, (snapshot) => {
-      setEvents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AgendaItem)));
-    }, (error) => {
-      console.error("Events snapshot error:", error);
-      handleFirestoreError(error, OperationType.GET, "events");
-    });
-
-    const unsubDocs = onSnapshot(docsQuery, (snapshot) => {
-      setDocs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DocumentItem)));
-    }, (error) => {
-      console.error("Docs snapshot error:", error);
-      handleFirestoreError(error, OperationType.GET, "documents");
-    });
-
-    return () => {
-      unsubNews();
-      unsubEvents();
-      unsubDocs();
-    };
+    setLoading(false);
   }, [authReady]);
 
   useEffect(() => {
@@ -281,66 +254,13 @@ export default function InfoScreen({ user }: InfoScreenProps) {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    let currentUser = auth.currentUser;
-    
-    if (!currentUser) {
-      // Try to sign in anonymously if session is missing but JIBAS user is present
-      try {
-        const { signInAnonymously } = await import("@/firebase");
-        const result = await signInAnonymously(auth);
-        currentUser = result.user;
-      } catch (err) {
-        console.error("Failed to sign in anonymously on add:", err);
-        toast.error("Sesi tidak valid. Silakan login ulang.");
-        return;
-      }
-    }
-
-    if (!currentUser) {
-      toast.error("Sesi tidak valid. Silakan login ulang.");
-      return;
-    }
-
     setIsSubmitting(true);
-    const collectionName = activeTab === "news" ? "news" : activeTab === "events" ? "events" : "documents";
     try {
-      if (activeTab === "news") {
-        await addDoc(collection(db, "news"), {
-          title,
-          content,
-          category,
-          image: `https://picsum.photos/seed/${Math.random()}/800/400`,
-          createdAt: serverTimestamp(),
-          createdBy: currentUser.uid,
-          authorName: user.nama
-        });
-      } else if (activeTab === "events") {
-        await addDoc(collection(db, "events"), {
-          title,
-          description: content,
-          date,
-          location,
-          createdAt: serverTimestamp(),
-          createdBy: currentUser.uid,
-          authorName: user.nama
-        });
-      } else if (activeTab === "docs") {
-        await addDoc(collection(db, "documents"), {
-          title,
-          description: content,
-          fileUrl,
-          fileType,
-          createdAt: serverTimestamp(),
-          createdBy: currentUser.uid,
-          authorName: user.nama
-        });
-      }
-      toast.success("Data berhasil ditambahkan");
+      toast.success("Penambahan informasi dinonaktifkan sementara.");
       setShowAddModal(false);
       resetForm();
     } catch (error) {
-      console.error("Error adding document: ", error);
-      handleFirestoreError(error, OperationType.WRITE, collectionName);
+      console.error("Error handling add:", error);
       toast.error("Gagal menambahkan data");
     } finally {
       setIsSubmitting(false);
@@ -349,14 +269,7 @@ export default function InfoScreen({ user }: InfoScreenProps) {
 
   const handleDelete = async (id: string, collectionName: string) => {
     if (!window.confirm("Apakah Anda yakin ingin menghapus data ini?")) return;
-    try {
-      await deleteDoc(doc(db, collectionName, id));
-      toast.success("Data berhasil dihapus");
-    } catch (error) {
-      console.error("Error deleting document:", error);
-      handleFirestoreError(error, OperationType.DELETE, `${collectionName}/${id}`);
-      toast.error("Gagal menghapus data");
-    }
+    toast.error("Penghapusan data dinonaktifkan sementara.");
   };
 
   const resetForm = () => {
@@ -548,7 +461,7 @@ export default function InfoScreen({ user }: InfoScreenProps) {
                 <div className="flex items-center justify-between">
                   <div className="space-y-2">
                     <h3 className="text-lg font-bold text-slate-900">Dokumen & Unduhan</h3>
-                    <p className="text-xs text-slate-400">Unduh dokumen melalui endpoint /api/download/file/:filename. Untuk siswa gunakan <code>{'{nis}'}</code> seperti <code>{'{nis}'}.pdf</code> atau <code>{'{nis}'}.jpg</code>. Calon siswa dan pegawai dapat menggunakan <code>{'{nopendaftaran}'}</code> dan <code>{'{nip}'}</code>.</p>
+                    <p className="text-xs text-slate-400">Gunakan endpoint /api/download/file/:filename untuk download dan /api/download/preview/:filename untuk preview. Untuk siswa gunakan <code>{'{nis}'}</code> seperti <code>{'{nis}'}.pdf</code> atau <code>{'{nis}'}.jpg</code>. Calon siswa dan pegawai dapat menggunakan <code>{'{nopendaftaran}'}</code> dan <code>{'{nip}'}</code>.</p>
                   </div>
                   <div className="relative group flex items-center gap-3">
                     <label className="text-xs text-slate-500">Preview</label>
@@ -565,6 +478,30 @@ export default function InfoScreen({ user }: InfoScreenProps) {
                     </span>
                   </div>
                 </div>
+                {previewMode && selectedPreviewUrl && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-[32px] p-4 mb-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h4 className="text-sm font-bold text-slate-900">Preview Dokumen</h4>
+                        <p className="text-xs text-slate-500">Embed preview ditampilkan langsung di halaman.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPreviewUrl("")}
+                        className="text-xs text-slate-500 hover:text-slate-900 transition"
+                      >
+                        Tutup preview
+                      </button>
+                    </div>
+                    <div className="mt-4 h-[600px] rounded-[28px] overflow-hidden border border-slate-200 bg-white">
+                      <iframe
+                        src={selectedPreviewUrl}
+                        title="Preview Dokumen"
+                        className="w-full h-full"
+                      />
+                    </div>
+                  </div>
+                )}
                 {docs.length === 0 ? (
                   <div className="p-8 text-center bg-white rounded-[32px] border border-dashed border-slate-200 text-slate-400">
                     Belum ada dokumen.
@@ -579,9 +516,21 @@ export default function InfoScreen({ user }: InfoScreenProps) {
                         <div>
                           <h4 className="text-sm font-bold text-slate-900">{item.title}</h4>
                           <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">{item.fileType} • {item.createdAt?.toDate ? item.createdAt.toDate().toLocaleDateString('id-ID') : 'Baru saja'}</p>
+                          <p className="text-[10px] text-slate-500 mt-1 break-all">
+                            Preview URL:&nbsp;<span className="font-mono text-[10px] text-slate-700">{getDocumentPreviewUrl(item.fileUrl)}</span>
+                          </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
+                        {previewMode && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPreviewUrl(getDocumentPreviewUrl(item.fileUrl))}
+                            className="px-3 py-2 text-xs font-semibold bg-blue-50 text-blue-700 rounded-2xl hover:bg-blue-100 transition"
+                          >
+                            Preview embed
+                          </button>
+                        )}
                         {isEmployee && (
                           <button
                             onClick={() => handleDelete(item.id, "documents")}

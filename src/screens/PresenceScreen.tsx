@@ -3,8 +3,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Calendar, Clock, CheckCircle2, AlertCircle, Loader2, MapPin, UserCheck, BookOpen, Fingerprint } from "lucide-react";
 import { UserData } from "@/types";
 import { cn } from "@/lib/utils";
-import { syncBiometricsToFirestore } from "@/lib/biometricSync";
-import { db, collection, query, where, orderBy, onSnapshot, handleFirestoreError, OperationType } from "@/firebase";
 
 interface PresenceScreenProps {
   user: UserData;
@@ -23,7 +21,6 @@ export default function PresenceScreen({ user, onBack, initialTab }: PresenceScr
   const [subjectAttendance, setSubjectAttendance] = useState<any[]>([]);
   const [employeeAttendance, setEmployeeAttendance] = useState<any[]>([]);
   const [biometricData, setBiometricData] = useState<any[]>([]);
-  const [firestoreBiometrics, setFirestoreBiometrics] = useState<any[]>([]);
   const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
   const [selectedMonth, setSelectedMonth] = useState<string>((new Date().getMonth() + 1).toString().padStart(2, '0'));
   const [stats, setStats] = useState({ hadir: 0, izin: 0, alpa: 0 });
@@ -232,11 +229,6 @@ export default function PresenceScreen({ user, onBack, initialTab }: PresenceScr
 
         const uniqueBiometric = Array.from(uniqueMap.values());
         setBiometricData(uniqueBiometric);
-
-        // Sync all fetched biometrics to Firestore
-        if (user.uid) {
-          syncBiometricsToFirestore(uniqueBiometric, user.uid);
-        }
       } catch (error) {
         console.error("Error fetching attendance data:", error);
       } finally {
@@ -247,47 +239,15 @@ export default function PresenceScreen({ user, onBack, initialTab }: PresenceScr
     fetchData();
   }, [user.nis, user.nip, user.nopendaftaran, user.nama, user.replid, user.pin, user.id_fingerprint, user.id]);
 
-  useEffect(() => {
-    if (!user.uid) return;
-
-    const q = query(
-      collection(db, "biometrics"),
-      where("userId", "==", user.uid),
-      orderBy("tanggal", "desc"),
-      orderBy("jam", "desc")
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        ...doc.data(),
-        id: doc.id
-      }));
-      setFirestoreBiometrics(data);
-    }, (error) => {
-      console.error("Error fetching biometrics from Firestore:", error);
-      handleFirestoreError(error, OperationType.GET, "biometrics");
-    });
-
-    return () => unsubscribe();
-  }, [user.uid]);
-
-  // Merge API and Firestore data for Biometric tab
   const displayBiometricData = React.useMemo(() => {
-    // Combine all sources
-    const allRecords = [...biometricData, ...firestoreBiometrics];
-    
-    // Aggressive deduplication using a Map
     const uniqueMap = new Map();
-    allRecords.forEach(record => {
+    biometricData.forEach(record => {
       const date = String(record.tanggal || '').split('T')[0].trim();
       const time = String(record.jam || '').substring(0, 8).trim();
       const type = String(record.type || '').trim().toLowerCase();
       const status = String(record.status || '').trim().toLowerCase();
       const token = String(record.face_token || record.machine_id || '').trim();
-      
-      // Use a robust key for deduplication
       const key = `${date}_${time}_${type}_${status}_${token}`;
-      
       if (!uniqueMap.has(key)) {
         uniqueMap.set(key, record);
       }
@@ -295,14 +255,12 @@ export default function PresenceScreen({ user, onBack, initialTab }: PresenceScr
 
     const uniqueRecords = Array.from(uniqueMap.values());
 
-    // Filter by selected year and month
     const filtered = uniqueRecords.filter(item => {
       if (!item.tanggal) return false;
       const [year, month] = item.tanggal.split('-');
       return year === selectedYear && month === selectedMonth;
     });
 
-    // Sort and limit to 5
     return filtered.sort((a: any, b: any) => {
       const parseDate = (item: any) => {
         const d = new Date(item.tanggal);
@@ -312,7 +270,7 @@ export default function PresenceScreen({ user, onBack, initialTab }: PresenceScr
       };
       return parseDate(b) - parseDate(a);
     }).slice(0, 5);
-  }, [biometricData, firestoreBiometrics, selectedYear, selectedMonth]);
+  }, [biometricData, selectedYear, selectedMonth]);
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20">

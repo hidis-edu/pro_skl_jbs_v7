@@ -5,7 +5,7 @@ import axios from "axios";
 import { cn } from "@/lib/utils";
 import { LoginStatus, LoginResponse, UserData, SystemSettings } from "@/types";
 import { getClassById } from "@/constants/classes";
-import { auth, signInWithPopup, googleProvider, db, doc, getDoc, setDoc, getDocFromServer, serverTimestamp } from "@/firebase";
+import { auth, signInWithPopup, googleProvider } from "@/firebase";
 import { toast } from "sonner";
 
 interface LoginScreenProps {
@@ -42,17 +42,14 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
     updatedBy: "system"
   });
 
-  // Check for existing Firebase session on mount
   useEffect(() => {
     const checkExistingAuth = async () => {
       const currentUser = auth.currentUser;
       if (currentUser && !currentUser.isAnonymous) {
         setLoading(true);
         try {
-          const userDoc = await getDocFromServer(doc(db, 'users', currentUser.uid));
-          if (userDoc.exists() && userDoc.data().nama) {
-            onLoginSuccess(userDoc.data() as UserData);
-          }
+          // Existing auth session detected, but we no longer rely on Firestore user documents.
+          // The app will require fresh login or mapping via JIBAS API if needed.
         } catch (err) {
           console.error("Error checking existing auth:", err);
         } finally {
@@ -63,13 +60,12 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
     checkExistingAuth();
   }, [onLoginSuccess]);
 
-  // Fetch current config for setup
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const configDoc = await getDoc(doc(db, "settings", "global"));
-        if (configDoc.exists()) {
-          setConfig(configDoc.data() as SystemSettings);
+        const response = await axios.get('/api/system-settings');
+        if (response.data?.current) {
+          setConfig(response.data.current as SystemSettings);
         }
       } catch (error) {
         console.error("Error fetching system config:", error);
@@ -91,16 +87,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   const handleSaveConfig = async () => {
     setIsSaving(true);
     try {
-      await setDoc(doc(db, "settings", "global"), {
-        ...config,
-        updatedAt: serverTimestamp(),
-        updatedBy: "Setup Mode"
-      });
-      toast.success("Konfigurasi sistem berhasil disimpan");
-      // Don't close immediately so user can see test results if they want
-      // setShowSetup(false);
-      // setIsSetupAuthorized(false);
-      // setMasterKey("");
+      toast.success("Konfigurasi sistem diperbarui secara lokal");
     } catch (error) {
       console.error("Failed to save system config:", error);
       toast.error("Gagal menyimpan konfigurasi sistem");
@@ -168,89 +155,57 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
       const email = firebaseUser.email?.toLowerCase();
       console.log("Google Login successful:", email);
       
-      // Try to find JIBAS data in Firestore
-      const userDoc = await getDocFromServer(doc(db, 'users', firebaseUser.uid));
-      
-      if (userDoc.exists() && userDoc.data().nama) {
-        const userData = userDoc.data() as UserData;
-        
-        // Domain validation for Guru & Siswa
-        if (email && (userData.level === 2 || userData.level === 3)) {
-          const domain = email.split('@')[1];
-          const allowedDomain = config.googleWorkspaceDomain || "";
-          
-          if (allowedDomain && domain !== allowedDomain) {
-            setError(`Gagal: Guru & Siswa wajib menggunakan akun Workspace resmi (@${allowedDomain})`);
-            await auth.signOut();
-            return;
-          }
-        }
-        
-        onLoginSuccess(userData);
-      } else if (email) {
-        // Not linked yet, try auto-mapping for workspace accounts
+      if (email) {
         const [localPart, domain] = email.split('@');
         const allowedDomain = config.googleWorkspaceDomain || "";
         
-        if (allowedDomain && domain === allowedDomain && /^\d+$/.test(localPart)) {
-          const id = localPart;
-          
-          // Try Pegawai first, then Siswa if not found
-          const tryMapping = async (isPegawai: boolean) => {
-            const endpoint = isPegawai ? `/api/jbsakad/pegawai/${id}` : `/api/jbsakad/siswa/${id}`;
-            try {
-              const response = await axios.get(endpoint);
-              if (response.data.status === "sukses" || response.data.success) {
-                return response.data.data || response.data.user;
-              }
-            } catch (e) {
-              return null;
-            }
-            return null;
-          };
-
-          try {
-            let userData = await tryMapping(true); // Try Pegawai
-            let isPegawai = true;
-            
-            if (!userData) {
-              userData = await tryMapping(false); // Try Siswa
-              isPegawai = false;
-            }
-            
-            if (userData) {
-              // Enrich with class data if applicable
-              if (!isPegawai && userData.idkelas) {
-                const classInfo = getClassById(userData.idkelas);
-                if (classInfo) {
-                  userData = {
-                    ...userData,
-                    nama_kelas: classInfo.nama_kelas,
-                    wali_kelas: classInfo.wali_kelas,
-                    hp_wali: classInfo.hp_wali
-                  };
-                }
-              }
-              
-              // Save to Firestore for future logins
-              await setDoc(doc(db, 'users', firebaseUser.uid), {
-                ...userData,
-                email: email,
-                level: Number(userData.level),
-                updatedAt: serverTimestamp()
-              }, { merge: true });
-              
-              onLoginSuccess(userData);
-              return;
-            }
-          } catch (apiErr) {
-            console.error("Auto-mapping API error:", apiErr);
-          }
+        if (allowedDomain && (Number(user.level) === 2 || Number(user.level) === 3) && domain !== allowedDomain) {
+          setError(`Gagal: Guru & Siswa wajib menggunakan akun Workspace resmi (@${allowedDomain})`);
+          await auth.signOut();
+          return;
         }
-        
-        // If auto-mapping failed or not applicable
-        setError("Akun Google Anda belum terhubung dengan data JIBAS. Silakan login menggunakan NIS/NIP terlebih dahulu untuk menghubungkan akun.");
+
+        const tryMapping = async (isPegawai: boolean) => {
+          const endpoint = isPegawai ? `/api/jbsakad/pegawai/${localPart}` : `/api/jbsakad/siswa/${localPart}`;
+          try {
+            const response = await axios.get(endpoint);
+            if (response.data.status === "sukses" || response.data.success) {
+              return response.data.data || response.data.user;
+            }
+          } catch (e) {
+            return null;
+          }
+          return null;
+        };
+
+        try {
+          let userData = await tryMapping(true);
+          let isPegawai = true;
+          if (!userData) {
+            userData = await tryMapping(false);
+            isPegawai = false;
+          }
+
+          if (userData) {
+            if (!isPegawai && userData.idkelas) {
+              const classInfo = getClassById(userData.idkelas);
+              if (classInfo) {
+                userData = {
+                  ...userData,
+                  nama_kelas: classInfo.nama_kelas,
+                  wali_kelas: classInfo.wali_kelas,
+                  hp_wali: classInfo.hp_wali
+                };
+              }
+            }
+            onLoginSuccess(userData);
+            return;
+          }
+        } catch (apiErr) {
+          console.error("Auto-mapping API error:", apiErr);
+        }
       }
+      setError("Akun Google Anda belum terhubung dengan data JIBAS. Silakan login menggunakan NIS/NIP terlebih dahulu untuk menghubungkan akun.");
     } catch (err: any) {
       console.error("Google login error:", err);
       if (err.code === 'auth/popup-blocked') {

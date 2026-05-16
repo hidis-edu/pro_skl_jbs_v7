@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
 import { io, Socket } from "socket.io-client";
-import { db, doc, setDoc, onSnapshot, collection, query, where, serverTimestamp, deleteDoc, Timestamp, handleFirestoreError, OperationType } from "@/firebase";
 
 interface ChatScreenProps {
   user: UserData;
@@ -112,70 +111,6 @@ export default function ChatScreen({ user, group, onBack }: ChatScreenProps) {
       socket.disconnect();
     };
   }, [groupId]);
-
-  // Firestore Presence Logic (for Serverless/Vercel compatibility)
-  useEffect(() => {
-    if (!user?.uid || !groupId) return;
-
-    const presenceDocRef = doc(db, "presence", user.uid);
-    
-    // 1. Set initial presence
-    const updatePresence = async () => {
-      try {
-        await setDoc(presenceDocRef, {
-          uid: user.uid,
-          nama: user.nama,
-          room: groupId,
-          lastSeen: serverTimestamp()
-        }, { merge: true });
-      } catch (err) {
-        console.error("Error updating presence:", err);
-        handleFirestoreError(err, OperationType.WRITE, `presence/${user.uid}`);
-      }
-    };
-
-    updatePresence();
-
-    // 2. Heartbeat every 30 seconds
-    const heartbeatInterval = setInterval(updatePresence, 30000);
-
-    // 3. Listen for other users in the same room
-    const q = query(collection(db, "presence"), where("room", "==", groupId));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const now = Date.now();
-      const activeUsers: string[] = [];
-      
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        const lastSeen = data.lastSeen as Timestamp;
-        
-        if (lastSeen) {
-          const lastSeenMs = lastSeen.toMillis();
-          // Consider user online if seen in the last 2 minutes
-          if (now - lastSeenMs < 120000) {
-            activeUsers.push(data.nama || "Unknown");
-          }
-        }
-      });
-      
-      // Merge with socket-based online users if any, and remove duplicates
-      setOnlineUsers(prev => {
-        const combined = Array.from(new Set([...activeUsers]));
-        return combined;
-      });
-    }, (err) => {
-      console.error("Presence snapshot error:", err);
-      handleFirestoreError(err, OperationType.GET, "presence");
-    });
-
-    // 4. Cleanup on unmount
-    return () => {
-      clearInterval(heartbeatInterval);
-      unsubscribe();
-      // Try to delete presence doc or set room to null
-      deleteDoc(presenceDocRef).catch(e => console.error("Error removing presence:", e));
-    };
-  }, [user?.uid, groupId, user?.nama]);
 
   useEffect(() => {
     if (scrollRef.current) {
