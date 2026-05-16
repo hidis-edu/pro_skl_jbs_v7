@@ -1,0 +1,218 @@
+{
+  "entities": {
+    "Pickup": {
+      "title": "Pickup",
+      "description": "A student pickup request by a guardian",
+      "type": "object",
+      "properties": {
+        "studentNis": { "type": "string", "description": "The NIS of the student" },
+        "studentName": { "type": "string", "description": "The name of the student" },
+        "studentClass": { "type": "string", "description": "The class of the student" },
+        "guardianName": { "type": "string", "description": "The name of the guardian" },
+        "relationship": { "type": "string", "description": "The relationship to the student" },
+        "photo": { "type": "string", "description": "Base64 encoded photo of the guardian" },
+        "status": { "type": "string", "enum": ["waiting", "verified"], "description": "Status of the pickup" },
+        "time": { "type": "string", "description": "Time of the pickup request" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the request was created" },
+        "createdBy": { "type": "string", "description": "UID of the user who created the request" }
+      },
+      "required": ["studentName", "guardianName", "relationship", "status", "time", "createdAt", "createdBy"]
+    },
+    "News": {
+      "title": "News",
+      "description": "School news and announcements",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "category": { "type": "string" },
+        "image": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "authorName": { "type": "string" }
+      },
+      "required": ["title", "content", "category", "createdAt", "createdBy", "authorName"]
+    },
+    "Event": {
+      "title": "Event",
+      "description": "School agenda and events",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "location": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "authorName": { "type": "string" }
+      },
+      "required": ["title", "description", "date", "createdAt", "createdBy", "authorName"]
+    },
+    "Document": {
+      "title": "Document",
+      "description": "School documents and downloads",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "fileType": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "authorName": { "type": "string" }
+      },
+      "required": ["title", "fileUrl", "fileType", "createdAt", "createdBy", "authorName"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "A payment confirmation request from a student",
+      "type": "object",
+      "properties": {
+        "billId": { "type": "string" },
+        "billName": { "type": "string" },
+        "studentNis": { "type": "string" },
+        "studentName": { "type": "string" },
+        "amount": { "type": "number" },
+        "proofPhoto": { "type": "string" },
+        "status": { "type": "string", "enum": ["waiting", "verified", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "verifiedAt": { "type": "string", "format": "date-time" },
+        "verifiedBy": { "type": "string" }
+      },
+      "required": ["billId", "billName", "studentNis", "studentName", "amount", "proofPhoto", "status", "createdAt", "createdBy"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile data linked to JIBAS",
+      "type": "object",
+      "properties": {
+        "nis": { "type": "string", "description": "NIS for students" },
+        "nip": { "type": "string", "description": "NIP for employees" },
+        "nopendaftaran": { "type": "string", "description": "No. Pendaftaran for prospective students" },
+        "level": { "type": "number", "description": "1: Landlord, 2: Pegawai, 3: Siswa, 4: Calon Siswa" },
+        "nama": { "type": "string", "description": "Full name" },
+        "idkelas": { "type": "number", "description": "Class ID" },
+        "nama_kelas": { "type": "string", "description": "Class name" },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "System role" },
+        "is_finance": { "type": "number", "description": "1 if user is finance staff" },
+        "whatsapp_api_key": { "type": "string", "description": "API Key for WhatsApp Gateway" },
+        "lastGuardian": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "relationship": { "type": "string" },
+            "photo": { "type": "string" }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nama", "level"]
+    },
+    "Biometric": {
+      "title": "Biometric",
+      "description": "Biometric attendance record (Fingerprint or FaceID)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Original ID from JIBAS API" },
+        "nomor_induk": { "type": "string", "description": "NIS or NIP of the user" },
+        "nama": { "type": "string", "description": "Name of the user" },
+        "tanggal": { "type": "string", "description": "Date of attendance (YYYY-MM-DD)" },
+        "jam": { "type": "string", "description": "Time of attendance (HH:mm:ss)" },
+        "type": { "type": "string", "enum": ["Fingerprint", "FaceID"], "description": "Type of biometric" },
+        "status": { "type": "string", "description": "Attendance status (e.g., Masuk, Pulang)" },
+        "keterangan": { "type": "string", "description": "Additional notes or description" },
+        "machine_id": { "type": "string", "description": "Machine ID for Fingerprint" },
+        "face_token": { "type": "string", "description": "Face token for FaceID" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when synced to Firestore" },
+        "userId": { "type": "string", "description": "UID of the user in Firebase" }
+      },
+      "required": ["nomor_induk", "nama", "tanggal", "jam", "type", "createdAt", "userId"]
+    },
+    "Gallery": {
+      "title": "Gallery",
+      "description": "School gallery photo",
+      "type": "object",
+      "properties": {
+        "replid": { "type": "number" },
+        "judul": { "type": "string" },
+        "tanggal": { "type": "string", "format": "date-time" },
+        "departemen": { "type": "string" },
+        "nama_pengirim": { "type": "string" },
+        "photo_cover": { "type": "string" },
+        "tgl_display": { "type": "string" },
+        "syncedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["replid", "judul", "tanggal", "photo_cover", "syncedAt"]
+    },
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "Global system configuration for JIBAS and WhatsApp Gateway",
+      "type": "object",
+      "properties": {
+        "jibasApiUrl": { "type": "string", "description": "Base URL for JIBAS API" },
+        "whatsappGatewayUrl": { "type": "string", "description": "Base URL for WhatsApp Gateway" },
+        "whatsappApiKey": { "type": "string", "description": "API Key for WhatsApp Gateway" },
+        "adminWhatsApp": { "type": "string", "description": "Admin WhatsApp number for notifications" },
+        "googleWorkspaceDomain": { "type": "string", "description": "Allowed Google Workspace domain for Classroom/Meet" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["jibasApiUrl", "whatsappGatewayUrl", "whatsappApiKey", "updatedAt", "updatedBy"]
+    },
+    "Presence": {
+      "title": "Presence",
+      "description": "Real-time user presence in chat rooms",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "nama": { "type": "string" },
+        "room": { "type": "string" },
+        "lastSeen": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "nama", "room", "lastSeen"]
+    }
+  },
+  "firestore": {
+    "/pickups/{pickupId}": {
+      "schema": "Pickup",
+      "description": "Collection of student pickup requests"
+    },
+    "/news/{newsId}": {
+      "schema": "News",
+      "description": "Collection of school news"
+    },
+    "/events/{eventId}": {
+      "schema": "Event",
+      "description": "Collection of school events"
+    },
+    "/documents/{docId}": {
+      "schema": "Document",
+      "description": "Collection of school documents"
+    },
+    "/payments/{paymentId}": {
+      "schema": "Payment",
+      "description": "Collection of payment confirmation requests"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user profiles"
+    },
+    "/biometrics/{biometricId}": {
+      "schema": "Biometric",
+      "description": "Collection of biometric attendance records"
+    },
+    "/gallery/{galleryId}": {
+      "schema": "Gallery",
+      "description": "Collection of school gallery photos"
+    },
+    "/presence/{userId}": {
+      "schema": "Presence",
+      "description": "Collection of user presence records"
+    },
+    "/settings/{settingId}": {
+      "schema": "SystemSettings",
+      "description": "Global system settings"
+    }
+  }
+}

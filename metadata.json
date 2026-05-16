@@ -1,0 +1,8 @@
+{
+  "name": "Client Jibas Mobile 2",
+  "description": "Sistem Informasi Sekolah Terpadu JIBAS dengan fitur login multi-user, status penjemputan, dan informasi sekolah.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

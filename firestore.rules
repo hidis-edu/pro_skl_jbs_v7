@@ -1,0 +1,288 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: pickups
+    // Document ID: auto-generated
+    // Fields:
+    //   - studentNis: string (required) - NIS of the student
+    //   - studentName: string (required) - Name of the student
+    //   - studentClass: string (required) - Class of the student
+    //   - guardianName: string (required) - Name of the guardian
+    //   - relationship: string (required) - Relationship to the student
+    //   - photo: string (optional) - Base64 photo of the guardian
+    //   - status: string (required, enum: ['waiting', 'verified']) - Status of the pickup
+    //   - time: string (required) - Time of the pickup request
+    //   - createdAt: timestamp (required) - Timestamp when the request was created
+    //   - createdBy: string (required) - UID of the user who created the request
+    //
+    // Collection: users
+    // Document ID: Firebase UID
+    // Fields:
+    //   - nis: string (optional) - NIS for students
+    //   - nip: string (optional) - NIP for employees
+    //   - nopendaftaran: string (optional) - No. Pendaftaran for prospective students
+    //   - level: number (required) - 1: Landlord, 2: Pegawai, 3: Siswa, 4: Calon Siswa
+    //   - nama: string (required) - Name of the user
+    //   - idkelas: number (optional) - Class ID
+    //   - nama_kelas: string (optional) - Class name
+    //   - role: string (optional, enum: ['admin', 'user']) - System role
+    //   - is_finance: number (optional) - 1 if user is finance staff
+    //   - lastGuardian: map (optional) - Saved guardian profile
+    //   - updatedAt: timestamp (optional) - Last sync time
+    //
+    // Collection: payments
+    // Document ID: auto-generated
+    // Fields:
+    //   - billId: string (required) - ID of the bill
+    //   - billName: string (required) - Name of the bill
+    //   - studentNis: string (required) - NIS of the student
+    //   - studentName: string (required) - Name of the student
+    //   - amount: number (required) - Amount paid
+    //   - proofPhoto: string (required) - Base64 photo of proof
+    //   - status: string (required, enum: ['waiting', 'verified', 'rejected']) - Status
+    //   - createdAt: timestamp (required) - Creation time
+    //   - createdBy: string (required) - UID of creator
+    //
+    // Collection: biometrics
+    // Document ID: nomor_induk_tanggal_jam_type_status
+    // Fields:
+    //   - nomor_induk: string (required) - Student/Employee ID
+    //   - nama: string (required) - Name
+    //   - tanggal: string (required) - YYYY-MM-DD
+    //   - jam: string (required) - HH:mm:ss
+    //   - type: string (required, enum: ['Fingerprint', 'FaceID'])
+    //   - status: string (optional) - Masuk/Pulang
+    //   - keterangan: string (optional) - Notes
+    //   - createdAt: timestamp (required)
+    //   - userId: string (required) - Owner UID
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      let path = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(path) ? get(path).data : {};
+    }
+
+    function isEmployee() {
+      let data = getUserData();
+      let level = data.get('level', 0);
+      return isAuthenticated() && (
+        (level == 1 || level == '1' || level == 2 || level == '2') || 
+        isAdmin()
+      );
+    }
+
+    function isFinance() {
+      let data = getUserData();
+      let is_finance = data.get('is_finance', 0);
+      let level = data.get('level', 0);
+      return isAuthenticated() && (
+        (level == 1 || level == '1') || 
+        ((level == 2 || level == '2') && (is_finance == 1 || is_finance == '1')) ||
+        isAdmin()
+      );
+    }
+
+    function isLandlord() {
+      let data = getUserData();
+      let level = data.get('level', 0);
+      return isAuthenticated() && (
+        (level == 1 || level == '1') || 
+        isAdmin() ||
+        (data.get('nama', '').toLower() == 'jibas') ||
+        (data.get('nis', '').toLower() == 'jibas') ||
+        (data.get('nip', '').toLower() == 'jibas')
+      );
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserData().get('role', 'user') == 'admin' ||
+        (request.auth.token.email == "wahab@alislam.sch.id" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isStudentOf(nis) {
+      let data = getUserData();
+      return isAuthenticated() && (
+        (data.keys().hasAny(['nis']) && data.nis != null && data.nis == nis) || 
+        (data.keys().hasAny(['nopendaftaran']) && data.nopendaftaran != null && data.nopendaftaran == nis)
+      );
+    }
+
+    function isValidPickup(data) {
+      return data.keys().hasAll(['studentNis', 'studentName', 'studentClass', 'guardianName', 'relationship', 'status', 'time', 'createdAt', 'createdBy']) &&
+             data.studentNis is string && data.studentNis.size() > 0 &&
+             data.studentName is string && data.studentName.size() > 0 && data.studentName.size() < 100 &&
+             data.studentClass is string && data.studentClass.size() > 0 && data.studentClass.size() < 50 &&
+             data.guardianName is string && data.guardianName.size() > 0 && data.guardianName.size() < 100 &&
+             data.relationship is string && data.relationship.size() > 0 && data.relationship.size() < 50 &&
+             data.status in ['waiting', 'verified'] &&
+             data.time is string &&
+             data.createdAt is timestamp &&
+             data.createdBy is string &&
+             (!('photo' in data) || (data.photo is string && data.photo.size() < 1000000)) &&
+             (!('verifiedAt' in data) || (data.verifiedAt is timestamp || data.verifiedAt is string));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['nama', 'level']) &&
+             data.nama is string && data.nama.size() > 0 && data.nama.size() < 100 &&
+             data.level is number &&
+             (!('nis' in data) || data.nis == null || (data.nis is string && data.nis.size() < 50)) &&
+             (!('nip' in data) || data.nip == null || (data.nip is string && data.nip.size() < 50)) &&
+             (!('nopendaftaran' in data) || data.nopendaftaran == null || (data.nopendaftaran is string && data.nopendaftaran.size() < 50)) &&
+             (!('idkelas' in data) || data.idkelas == null || data.idkelas is number) &&
+             (!('nama_kelas' in data) || data.nama_kelas == null || (data.nama_kelas is string && data.nama_kelas.size() < 100)) &&
+             (!('role' in data) || (data.role in ['admin', 'user'])) &&
+             (!('is_finance' in data) || data.is_finance is number) &&
+             (!('whatsapp_api_key' in data) || data.whatsapp_api_key == null || (data.whatsapp_api_key is string && data.whatsapp_api_key.size() < 255)) &&
+             (!('lastGuardian' in data) || (data.lastGuardian is map && data.lastGuardian.keys().hasAll(['name', 'relationship', 'photo']))) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['billId', 'billName', 'studentNis', 'studentName', 'amount', 'proofPhoto', 'status', 'createdAt', 'createdBy']) &&
+             data.billId is string &&
+             data.billName is string &&
+             data.studentNis is string &&
+             data.studentName is string &&
+             data.amount is number &&
+             data.proofPhoto is string && data.proofPhoto.size() < 1000000 &&
+             data.status in ['waiting', 'verified', 'rejected'] &&
+             data.createdAt is timestamp &&
+             data.createdBy is string &&
+             (!('verifiedAt' in data) || data.verifiedAt is timestamp) &&
+             (!('verifiedBy' in data) || data.verifiedBy is string);
+    }
+
+    function isValidBiometric(data) {
+      return data.keys().hasAll(['nomor_induk', 'nama', 'tanggal', 'jam', 'type', 'createdAt', 'userId']) &&
+             data.nomor_induk is string && data.nomor_induk.size() < 50 &&
+             data.nama is string && data.nama.size() < 100 &&
+             data.tanggal is string && data.tanggal.size() < 20 &&
+             data.jam is string && data.jam.size() < 20 &&
+             data.type in ['Fingerprint', 'FaceID'] &&
+             data.createdAt is timestamp &&
+             data.userId is string &&
+             (!('id' in data) || (data.id is string && data.id.size() < 50)) &&
+             (!('status' in data) || (data.status is string && data.status.size() < 50)) &&
+             (!('keterangan' in data) || (data.keterangan is string && data.keterangan.size() < 500)) &&
+             (!('machine_id' in data) || (data.machine_id is string || data.machine_id is number)) &&
+             (!('face_token' in data) || (data.face_token is string && data.face_token.size() < 255));
+    }
+
+    function isValidGallery(data) {
+      return data.keys().hasAll(['replid', 'judul', 'tanggal', 'photo_cover', 'syncedAt']) &&
+             data.replid is number &&
+             data.judul is string && data.judul.size() < 255 &&
+             data.tanggal is string &&
+             data.photo_cover is string && data.photo_cover.size() < 1000 &&
+             data.syncedAt is timestamp &&
+             (!('departemen' in data) || (data.departemen is string && data.departemen.size() < 100)) &&
+             (!('nama_pengirim' in data) || (data.nama_pengirim is string && data.nama_pengirim.size() < 100)) &&
+             (!('tgl_display' in data) || (data.tgl_display is string && data.tgl_display.size() < 50));
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll(['jibasApiUrl', 'whatsappGatewayUrl', 'whatsappApiKey', 'updatedAt', 'updatedBy']) &&
+             data.jibasApiUrl is string && data.jibasApiUrl.size() < 255 &&
+             data.whatsappGatewayUrl is string && data.whatsappGatewayUrl.size() < 255 &&
+             data.whatsappApiKey is string && data.whatsappApiKey.size() < 255 &&
+             (!('adminWhatsApp' in data) || (data.adminWhatsApp is string && data.adminWhatsApp.size() < 50)) &&
+             (!('googleWorkspaceDomain' in data) || (data.googleWorkspaceDomain is string && data.googleWorkspaceDomain.size() < 100)) &&
+             data.updatedAt is timestamp &&
+             data.updatedBy is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /pickups/{pickupId} {
+      // Guardians (students) can only read/create for their own NIS
+      // Employees can read all and update status
+      allow read: if isAuthenticated() && (isStudentOf(resource.data.studentNis) || isEmployee());
+      allow create: if isAuthenticated() && isValidPickup(request.resource.data) && (isStudentOf(request.resource.data.studentNis) || isEmployee());
+      allow update: if isAuthenticated() && (
+        (isStudentOf(resource.data.studentNis) && request.resource.data.status == resource.data.status) || 
+        (isEmployee() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'verifiedAt']))
+      ) && isValidPickup(request.resource.data);
+    }
+
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated() && (isStudentOf(resource.data.studentNis) || isFinance());
+      allow create: if isAuthenticated() && isValidPayment(request.resource.data) && (isStudentOf(request.resource.data.studentNis) || isFinance());
+      allow update: if isAuthenticated() && isFinance() && isValidPayment(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'verifiedAt', 'verifiedBy']);
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isEmployee();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if (isOwner(userId) && isValidUser(request.resource.data) && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role)) || isEmployee();
+      allow delete: if isOwner(userId);
+    }
+
+    match /news/{newsId} {
+      allow read: if isAuthenticated();
+      allow write: if isEmployee();
+    }
+
+    match /events/{eventId} {
+      allow read: if isAuthenticated();
+      allow write: if isEmployee();
+    }
+
+    match /documents/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isEmployee();
+    }
+
+    match /biometrics/{biometricId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isEmployee());
+      allow create, update: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isEmployee()) && isValidBiometric(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /gallery/{galleryId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isValidGallery(request.resource.data);
+    }
+
+    match /presence/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId) && 
+                    request.resource.data.keys().hasAll(['uid', 'nama', 'room', 'lastSeen']) &&
+                    request.resource.data.uid == userId &&
+                    request.resource.data.nama is string &&
+                    request.resource.data.room is string &&
+                    request.resource.data.lastSeen is timestamp;
+      allow delete: if isOwner(userId);
+    }
+
+    match /settings/{settingId} {
+      // Allow public read for global settings so login can find the API URL
+      allow read: if true; 
+      // Allow write if Landlord OR for initial setup (global doc)
+      // The Master Key verification happens in the app logic.
+      allow write: if (isLandlord() || settingId == 'global') && isValidSettings(request.resource.data);
+    }
+  }
+}
