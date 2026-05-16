@@ -74,6 +74,55 @@ export default function InfoScreen({ user }: InfoScreenProps) {
 
   const isEmployee = Number(user.level) === 1 || Number(user.level) === 2;
 
+  const getDocumentFilename = (raw: string) => {
+    if (!raw) return "";
+    let filename = raw.trim();
+
+    // Remove query string / hash if present
+    filename = filename.split("?")[0].split("#")[0];
+
+    if (filename.startsWith("/api/download/file/")) {
+      filename = filename.split("/").pop() || filename;
+    }
+    try {
+      const url = new URL(filename, window.location.origin);
+      filename = url.pathname;
+    } catch {
+      // not a full URL, use raw string as-is
+    }
+    const parts = filename.split("/").filter(Boolean);
+    return parts[parts.length - 1] || filename;
+  };
+
+  const resolveDocumentFilename = (raw: string) => {
+    let filename = getDocumentFilename(raw);
+    if (!filename) return "";
+
+    if (filename.includes("{nis}") && user.nis) {
+      filename = filename.replace(/\{nis\}/gi, user.nis);
+    }
+    if (filename.includes("{nopendaftaran}") && user.nopendaftaran) {
+      filename = filename.replace(/\{nopendaftaran\}/gi, user.nopendaftaran);
+    }
+    if (filename.includes("{nip}") && user.nip) {
+      filename = filename.replace(/\{nip\}/gi, user.nip);
+    }
+
+    return filename;
+  };
+
+  const getDocumentDownloadUrl = (raw: string) => {
+    const filename = resolveDocumentFilename(raw);
+    return `/api/download/file/${encodeURIComponent(filename)}`;
+  };
+
+  const getDocumentPreviewUrl = (raw: string) => {
+    const filename = resolveDocumentFilename(raw);
+    return `/api/preview/file/${encodeURIComponent(filename)}`;
+  };
+
+  const [previewMode, setPreviewMode] = useState<boolean>(true);
+
   useEffect(() => {
     const unsubscribeAuth = auth.onAuthStateChanged((firebaseUser) => {
       setAuthReady(!!firebaseUser);
@@ -496,7 +545,26 @@ export default function InfoScreen({ user }: InfoScreenProps) {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-4"
               >
-                <h3 className="text-lg font-bold text-slate-900">Dokumen & Unduhan</h3>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-2">
+                    <h3 className="text-lg font-bold text-slate-900">Dokumen & Unduhan</h3>
+                    <p className="text-xs text-slate-400">Unduh dokumen melalui endpoint /api/download/file/:filename. Untuk siswa gunakan <code>{'{nis}'}</code> seperti <code>{'{nis}'}.pdf</code> atau <code>{'{nis}'}.jpg</code>. Calon siswa dan pegawai dapat menggunakan <code>{'{nopendaftaran}'}</code> dan <code>{'{nip}'}</code>.</p>
+                  </div>
+                  <div className="relative group flex items-center gap-3">
+                    <label className="text-xs text-slate-500">Preview</label>
+                    <button
+                      onClick={() => setPreviewMode(!previewMode)}
+                      className={`w-12 h-7 rounded-full p-0.5 flex items-center transition-all ${previewMode ? 'bg-emerald-500' : 'bg-slate-200'}`}
+                      aria-pressed={previewMode}
+                      title={previewMode ? 'Mode Preview (inline)' : 'Mode Download (attachment)'}
+                    >
+                      <div className={`w-5 h-5 bg-white rounded-full shadow transform transition-transform ${previewMode ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                    </button>
+                    <span className="absolute top-full mt-2 right-0 z-50 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none bg-slate-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap">
+                      {previewMode ? 'Preview (inline) — tampilkan PDF/JPG di browser' : 'Download (attachment) — unduh file langsung'}
+                    </span>
+                  </div>
+                </div>
                 {docs.length === 0 ? (
                   <div className="p-8 text-center bg-white rounded-[32px] border border-dashed border-slate-200 text-slate-400">
                     Belum ada dokumen.
@@ -523,7 +591,7 @@ export default function InfoScreen({ user }: InfoScreenProps) {
                           </button>
                         )}
                         <a
-                          href={item.fileUrl}
+                          href={previewMode ? getDocumentPreviewUrl(item.fileUrl) : getDocumentDownloadUrl(item.fileUrl)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="w-10 h-10 bg-slate-50 text-slate-400 rounded-xl flex items-center justify-center hover:bg-blue-50 hover:text-blue-600 transition-all"
@@ -1057,14 +1125,15 @@ export default function InfoScreen({ user }: InfoScreenProps) {
                 {activeTab === "docs" && (
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">URL File</label>
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Nama File</label>
                       <input
                         required
                         value={fileUrl}
                         onChange={(e) => setFileUrl(e.target.value)}
-                        placeholder="https://..."
+                        placeholder="contoh: {nis}.pdf atau {nis}.jpg"
                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
                       />
+                      <p className="text-[10px] text-slate-400">Gunakan <code>{'{nis}'}</code> untuk siswa, <code>{'{nopendaftaran}'}</code> untuk calon siswa, dan <code>{'{nip}'}</code> untuk pegawai saat membuat dokumen yang bergantung pada peran.</p>
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Tipe File</label>

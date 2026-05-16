@@ -44,6 +44,56 @@ const io = new Server(httpServer, {
 
 app.use(express.json());
 
+const parseCookies = (cookieHeader?: string) => {
+  if (!cookieHeader) return {};
+  return cookieHeader.split("; ").reduce((acc, cookie) => {
+    const [name, ...rest] = cookie.split("=");
+    acc[name] = rest.join("=");
+    return acc;
+  }, {} as Record<string, string>);
+};
+
+const createLoginSessionCookie = (userData: any) => {
+  const sessionPayload = {
+    nis: userData.nis || null,
+    nopendaftaran: userData.nopendaftaran || null,
+    nip: userData.nip || null,
+    level: userData.level || null,
+    nama: userData.nama || null,
+  };
+  const encoded = Buffer.from(JSON.stringify(sessionPayload)).toString("base64");
+  return `jibas_session=${encodeURIComponent(encoded)}; Path=/; HttpOnly; SameSite=Lax`;
+};
+
+const getUserSessionFromRequest = (req: any) => {
+  const cookies = parseCookies(req.headers?.cookie);
+  if (!cookies.jibas_session) return null;
+  try {
+    const decoded = Buffer.from(decodeURIComponent(cookies.jibas_session), "base64").toString("utf-8");
+    return JSON.parse(decoded);
+  } catch (error) {
+    console.error("Failed to parse jibas_session cookie:", error);
+    return null;
+  }
+};
+
+const resolveFilenameFromSession = (filename: string, sessionUser: any) => {
+  if (!sessionUser) return filename;
+  if (!filename) return filename;
+
+  let resolved = filename;
+  if (resolved.includes("{nis}") && sessionUser.nis) {
+    resolved = resolved.replace(/\{nis\}/gi, sessionUser.nis);
+  }
+  if (resolved.includes("{nopendaftaran}") && sessionUser.nopendaftaran) {
+    resolved = resolved.replace(/\{nopendaftaran\}/gi, sessionUser.nopendaftaran);
+  }
+  if (resolved.includes("{nip}") && sessionUser.nip) {
+    resolved = resolved.replace(/\{nip\}/gi, sessionUser.nip);
+  }
+  return resolved;
+};
+
 // Health check endpoint
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
@@ -239,6 +289,85 @@ app.get("/api/system-settings", (req, res) => {
       VITE_WHATSAPP_GATEWAY_URL: process.env.VITE_WHATSAPP_GATEWAY_URL
     }
   });
+});
+
+// Download file endpoint proxy for binary content
+app.get("/api/download/file/:filename", async (req, res) => {
+  const { filename: rawFilename } = req.params;
+  const sessionUser = getUserSessionFromRequest(req);
+  const filename = resolveFilenameFromSession(rawFilename, sessionUser);
+  const queryString = req.url.includes("?") ? req.url.split("?")[1] : "";
+  const targetBaseUrl = systemSettings.jibasApiUrl.replace(/\/$/, "");
+  const targetUrl = `${targetBaseUrl}/api/download/file/${encodeURIComponent(filename)}${queryString ? `?${queryString}` : ""}`;
+
+  console.log(`[DOWNLOAD] rawFilename=${rawFilename} resolvedFilename=${filename} sessionUser=${JSON.stringify(sessionUser)}`);
+  console.log(`[DOWNLOAD] targetUrl=${targetUrl}`);
+
+  try {
+    const response = await axios.get(targetUrl, {
+      responseType: "stream",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+      },
+      timeout: 20000
+    });
+
+    // Forward relevant headers so browser can handle file download
+    const contentType = response.headers["content-type"];
+    const contentDisposition = response.headers["content-disposition"];
+    if (contentType) res.setHeader("Content-Type", contentType);
+    if (contentDisposition) res.setHeader("Content-Disposition", contentDisposition);
+    if (response.headers["content-length"]) {
+      res.setHeader("Content-Length", response.headers["content-length"]);
+    }
+
+    response.data.pipe(res);
+  } catch (error: any) {
+    console.error("Error proxying download file:", error?.message || error);
+    const status = error?.response?.status || 500;
+    const message = error?.response?.data || error?.message || "Failed to download file";
+    res.status(status).json({ status: "error", message });
+  }
+});
+
+// Preview file endpoint proxy - forces inline disposition for browser preview
+app.get("/api/preview/file/:filename", async (req, res) => {
+  const { filename: rawFilename } = req.params;
+  const sessionUser = getUserSessionFromRequest(req);
+  const filename = resolveFilenameFromSession(rawFilename, sessionUser);
+  const queryString = req.url.includes("?") ? req.url.split("?")[1] : "";
+  const targetBaseUrl = systemSettings.jibasApiUrl.replace(/\/$/, "");
+  const targetUrl = `${targetBaseUrl}/api/download/file/${encodeURIComponent(filename)}${queryString ? `?${queryString}` : ""}`;
+
+  console.log(`[PREVIEW] rawFilename=${rawFilename} resolvedFilename=${filename} sessionUser=${JSON.stringify(sessionUser)}`);
+  console.log(`[PREVIEW] targetUrl=${targetUrl}`);
+
+  try {
+    const response = await axios.get(targetUrl, {
+      responseType: "stream",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+      },
+      timeout: 20000
+    });
+
+    // Force inline so browser attempts to preview (useful for PDF / images)
+    const contentType = response.headers["content-type"];
+    if (contentType) res.setHeader("Content-Type", contentType);
+    // Use inline disposition but keep filename
+    const suggestedName = filename;
+    res.setHeader("Content-Disposition", `inline; filename="${suggestedName}"`);
+    if (response.headers["content-length"]) {
+      res.setHeader("Content-Length", response.headers["content-length"]);
+    }
+
+    response.data.pipe(res);
+  } catch (error: any) {
+    console.error("Error proxying preview file:", error?.message || error);
+    const status = error?.response?.status || 500;
+    const message = error?.response?.data || error?.message || "Failed to preview file";
+    res.status(status).json({ status: "error", message });
+  }
 });
 
 // Endpoint to test connection to JIBAS and WhatsApp APIs
@@ -555,6 +684,12 @@ app.all("/api/*", async (req, res, next) => {
           const userId = userData.nis || userData.nip || userData.nopendaftaran || userData.replid?.toString();
           if (userId) {
             syncToFirestore("users_sync", userId, userData);
+          }
+          try {
+            const cookieValue = createLoginSessionCookie(userData);
+            res.setHeader("Set-Cookie", cookieValue);
+          } catch (cookieError) {
+            console.error("Failed to set login session cookie:", cookieError);
           }
         }
       }
